@@ -1,0 +1,64 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Publish
+on:
+  push:
+    branches:
+      - main
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v3
+
+      - run: echo "::set-output name=version::$(jq -r '.devDependencies.hardhat' package.json)"
+        id: version
+
+      - name: Set up QEMU
+        id: qemu
+        uses: docker/setup-qemu-action@v2
+
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Docker meta
+        id: docker_meta
+        uses: docker/metadata-action@v4
+        with:
+          images: |
+            name=ghcr.io/${{ github.repository_owner }}/hardhat-node
+            name=docker.io/${{ github.repository_owner }}/hardhat-node,enable=${{ github.repository_owner == 'cartesi' }}
+          tags: |
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=latest
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        if: ${{ github.repository_owner == 'cartesi' }}
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push docker image
+        id: docker_build
+        uses: docker/bake-action@v2
+        with:
+          files: |
+            ./docker-bake.hcl
+            ./docker-bake.platforms.hcl
+            ${{ steps.docker_meta.outputs.bake-file }}
+          builder: ${{ steps.buildx.outputs.name }}
+          push: true
+          set: |
+            *.cache-from=type=gha
+            *.cache-to=type=gha,mode=max
